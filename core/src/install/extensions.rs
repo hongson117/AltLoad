@@ -52,6 +52,7 @@ pub(super) async fn sign_with_main_profile<C: MaxCertsCallback>(
     max_certs: &MaxCertsBehavior<C>,
     app_dir: PathBuf,
     udid: &str,
+    platform: TargetPlatform,
     cbs: Callbacks,
 ) -> Result<PathBuf, String> {
     let cert = CertificateIdentity::retrieve(machine_name, apple_id, dev, team, storage, max_certs)
@@ -106,7 +107,7 @@ pub(super) async fn sign_with_main_profile<C: MaxCertsCallback>(
         .map_err(|e| err("Couldn't prepare the app", e))?;
 
     let profile = dev
-        .download_team_provisioning_profile(team, &app_id, None::<DeveloperDeviceType>)
+        .download_team_provisioning_profile(team, &app_id, platform.developer_device_type())
         .await
         .map_err(|e| err("Couldn't download the provisioning profile", e))?;
     let entitlements = profile_entitlements(profile.encoded_profile.as_ref());

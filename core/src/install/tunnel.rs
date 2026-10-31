@@ -1,9 +1,21 @@
-// The RemotePairing tunnel from this iPhone to itself, through LocalDevVPN.
+// The RemotePairing tunnel from this iPhone to itself, through LocalDevVPN, or
+// (unofficial fork) straight to an Apple TV's `_remotepairing._tcp` service on the LAN.
 
 use super::*;
 
 pub(super) async fn open_tunnel(cfg: &Config) -> Result<(AdapterHandle, RsdHandshake), String> {
-    open_tunnel_to(&cfg.pairing_file_path, &cfg.host_name, &cfg.endpoints).await
+    open_tunnel_to(&cfg.pairing_file_path, &cfg.host_name, &cfg.endpoints)
+        .await
+        .map_err(|e| {
+            if cfg.platform == TargetPlatform::Tvos {
+                format!(
+                    "{e} For Apple TV: keep it awake on the same Wi-Fi, and make sure it is still \
+                     paired (Settings > Remotes and Devices > Remote App and Devices)."
+                )
+            } else {
+                format!("{e} Make sure LocalDevVPN is connected and Developer Mode is on.")
+            }
+        })
 }
 
 pub(super) async fn open_tunnel_to(
@@ -17,11 +29,12 @@ pub(super) async fn open_tunnel_to(
 
     // Try advertisements that prove they belong to the paired device first.
     let mut endpoints = endpoints.to_vec();
-    if let Some(irk) = rpf.alt_irk().map(<[u8]>::to_vec) {
+    // Apple TV pairings have no alt IRK; keep the given order then.
+    if let Some(irk) = rpf.alt_irk().filter(|k| !k.is_empty()).map(<[u8]>::to_vec) {
         endpoints.sort_by_key(|ep| !PeerDevice::validate_auth_tag(&irk, &ep.identifier, &ep.auth_tag));
     }
     if endpoints.is_empty() {
-        return Err("No address to reach this iPhone was given.".into());
+        return Err("No address to reach this device was given.".into());
     }
 
     let mut last_error = String::new();
@@ -32,8 +45,7 @@ pub(super) async fn open_tunnel_to(
         }
     }
     Err(format!(
-        "Couldn't open a tunnel to this device ({last_error}). Make sure LocalDevVPN is connected \
-         and Developer Mode is on."
+        "Couldn't open a tunnel to this device ({last_error})."
     ))
 }
 

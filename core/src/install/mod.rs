@@ -105,6 +105,9 @@ pub struct AltLoadInstallConfig {
     pub capabilities: *const c_char,
     /// App extensions: 0 keep, 1 keep and sign with the main profile, 2 remove.
     pub extensions_mode: i32,
+    /// Unofficial fork: target platform. 0 = iOS (this iPhone, via LocalDevVPN),
+    /// 1 = tvOS (an Apple TV reached directly over the LAN).
+    pub device_platform: i32,
 }
 
 #[repr(C)]
@@ -212,6 +215,28 @@ struct Config {
     server_id: String,
     capabilities: Vec<String>,
     extensions: ExtensionsMode,
+    platform: TargetPlatform,
+}
+
+/// Which kind of device the install goes to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TargetPlatform {
+    Ios,
+    Tvos,
+}
+
+impl TargetPlatform {
+    fn from_raw(v: i32) -> Self {
+        if v == 1 { Self::Tvos } else { Self::Ios }
+    }
+
+    /// `None` keeps isideload's default (iOS) endpoints.
+    pub(crate) fn developer_device_type(self) -> Option<DeveloperDeviceType> {
+        match self {
+            Self::Ios => None,
+            Self::Tvos => Some(DeveloperDeviceType::Tvos),
+        }
+    }
 }
 
 impl Config {
@@ -245,6 +270,7 @@ impl Config {
                 .filter(|s| !s.is_empty())
                 .collect(),
             extensions: ExtensionsMode::from_raw(c.extensions_mode),
+            platform: TargetPlatform::from_raw(c.device_platform),
         })
     }
 }
@@ -429,7 +455,10 @@ async fn run_install(
     check()?;
 
     // 2. Tunnel to this device.
-    cbs.progress("Connecting to this device…", -1.0);
+    cbs.progress(
+        if cfg.platform == TargetPlatform::Tvos { "Connecting to the Apple TV…" } else { "Connecting to this device…" },
+        -1.0,
+    );
     let (mut adapter, mut handshake) = open_tunnel(&cfg).await?;
     let udid = handshake
         .properties
@@ -442,6 +471,9 @@ async fn run_install(
     // 3. Unpack the IPA and add AltStore's device keys.
     cbs.progress("Preparing the app…", -1.0);
     let (work_dir, app_dir) = prepare_app(&cfg.ipa_path, &udid, &cfg.server_id)?;
+    if cfg.platform == TargetPlatform::Tvos {
+        bundle::check_tvos_bundle(&app_dir)?;
+    }
     let result = sign_and_install(&cfg, dev_session, cbs, replies, &check, &udid, app_dir, &mut adapter, &mut handshake).await;
     let _ = std::fs::remove_dir_all(&work_dir);
     result
@@ -480,16 +512,17 @@ async fn sign_and_install(
         .machine_name(cfg.machine_name.clone())
         .delete_app_after_install(false)
         .build();
+    sideloader.set_device_type(cfg.platform.developer_device_type());
 
     // 4. Register this device on the team.
-    cbs.progress("Registering this device…", -1.0);
+    cbs.progress(if cfg.platform == TargetPlatform::Tvos { "Registering the Apple TV…" } else { "Registering this device…" }, -1.0);
     let team = sideloader
         .get_team()
         .await
         .map_err(|e| err("Couldn't load your developer team", e))?;
     sideloader
         .get_dev_session()
-        .ensure_device_registered(&team, &cfg.device_name, udid, None::<DeveloperDeviceType>)
+        .ensure_device_registered(&team, &cfg.device_name, udid, cfg.platform.developer_device_type())
         .await
         .map_err(|e| err("Couldn't register this device", e))?;
     check()?;
@@ -538,6 +571,7 @@ async fn sign_and_install(
             &MaxCertsBehavior::Prompt(revoke_prompt.clone()),
             app_dir,
             udid,
+            cfg.platform,
             cbs,
         )
         .await?

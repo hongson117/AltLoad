@@ -91,6 +91,7 @@ typedef struct {
     const char *capabilities;
     /* App extensions: 0 keep, 1 keep and sign with the main profile, 2 remove. */
     int32_t extensions_mode;
+    int32_t device_platform; /* unofficial fork: 0 = iOS (this iPhone), 1 = tvOS (Apple TV over LAN) */
 } AltLoadInstallConfig;
 
 typedef struct {

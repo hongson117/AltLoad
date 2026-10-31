@@ -226,3 +226,75 @@ pub(super) fn read_profile(path: &Path) -> (i64, String) {
         .to_string();
     (expiration, team)
 }
+
+/// Unofficial fork: an Apple TV only runs tvOS builds. Refuse an iOS-only IPA up
+/// front instead of burning an App ID and failing at installation_proxy.
+pub(super) fn check_tvos_bundle(app: &Path) -> Result<(), String> {
+    let info: plist::Dictionary = plist::from_file(app.join("Info.plist"))
+        .map_err(|e| format!("Couldn't read the app's Info.plist: {e}"))?;
+    let platforms_tvos = info
+        .get("CFBundleSupportedPlatforms")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().any(|p| p.as_string() == Some("AppleTVOS")))
+        .unwrap_or(false);
+    let family_tv = info
+        .get("UIDeviceFamily")
+        .and_then(|v| v.as_array())
+        .map(|a| a.iter().any(|f| f.as_unsigned_integer() == Some(3)))
+        .unwrap_or(false);
+    if platforms_tvos || family_tv {
+        Ok(())
+    } else {
+        Err("This IPA isn't a tvOS app. Apple TV needs a tvOS build (UIDeviceFamily 3 / AppleTVOS).".into())
+    }
+}
+
+#[cfg(test)]
+mod tvos_tests {
+    use super::check_tvos_bundle;
+
+    fn app_with(info: &str) -> tempfile_dir::Dir {
+        let d = tempfile_dir::Dir::new();
+        std::fs::write(d.0.join("Info.plist"), info).unwrap();
+        d
+    }
+
+    mod tempfile_dir {
+        pub struct Dir(pub std::path::PathBuf);
+        impl Dir {
+            pub fn new() -> Self {
+                let p = std::env::temp_dir().join(format!("tvos-test-{}-{}", std::process::id(), rand_suffix()));
+                std::fs::create_dir_all(&p).unwrap();
+                Dir(p)
+            }
+        }
+        impl Drop for Dir {
+            fn drop(&mut self) {
+                let _ = std::fs::remove_dir_all(&self.0);
+            }
+        }
+        fn rand_suffix() -> u128 {
+            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        }
+    }
+
+    const HEAD: &str = r#"<?xml version="1.0" encoding="UTF-8"?><plist version="1.0"><dict>"#;
+
+    #[test]
+    fn accepts_tvos_family() {
+        let d = app_with(&format!("{HEAD}<key>UIDeviceFamily</key><array><integer>3</integer></array></dict></plist>"));
+        assert!(check_tvos_bundle(&d.0).is_ok());
+    }
+
+    #[test]
+    fn accepts_appletvos_platform() {
+        let d = app_with(&format!("{HEAD}<key>CFBundleSupportedPlatforms</key><array><string>AppleTVOS</string></array></dict></plist>"));
+        assert!(check_tvos_bundle(&d.0).is_ok());
+    }
+
+    #[test]
+    fn rejects_ios_only() {
+        let d = app_with(&format!("{HEAD}<key>UIDeviceFamily</key><array><integer>1</integer><integer>2</integer></array></dict></plist>"));
+        assert!(check_tvos_bundle(&d.0).is_err());
+    }
+}
