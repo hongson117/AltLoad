@@ -273,8 +273,9 @@ mod tvos_tests {
                 let _ = std::fs::remove_dir_all(&self.0);
             }
         }
-        fn rand_suffix() -> u128 {
-            std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()
+        fn rand_suffix() -> usize {
+            static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            N.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
         }
     }
 
