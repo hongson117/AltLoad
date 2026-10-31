@@ -42,6 +42,10 @@ zip = { version = "8.3", default-features = false, features = ["deflate"] }
 [patch.crates-io]
 idevice = { git = "https://github.com/jkcoxson/idevice.git", rev = "d32c8189c51c2789496b0768039419c3705498c3" }
 
+# Unofficial fork: vendored isideload 0.4.6 (MIT) with a patch that lets profiles
+# be downloaded for tvOS (Sideloader::set_device_type). See vendor/isideload.
+isideload = { path = "vendor/isideload" }
+
 [profile.release]
 opt-level = 3
 lto = "thin"
