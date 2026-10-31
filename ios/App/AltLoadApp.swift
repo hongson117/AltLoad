@@ -25,6 +25,7 @@ struct RootView: View {
     @State private var tab: AppTab = .install
     @StateObject private var install = InstallController.shared
     @Environment(\.scenePhase) private var scenePhase
+    @State private var openError: String?
 
     var body: some View {
         TabView(selection: $tab) {
@@ -46,10 +47,26 @@ struct RootView: View {
                 .auroraTheme()
         }
         .onOpenURL { url in
+            // Unofficial fork: an .ipa shared / "Open in" from Files becomes the tvOS IPA.
+            if url.isFileURL && url.pathExtension.lowercased() == "ipa" {
+                Task {
+                    do {
+                        let imported = try await StoreCatalog.importIPAAsync(from: url)
+                        UserDefaults.standard.set(imported.lastPathComponent, forKey: "tvIPA.file")
+                        tab = .install
+                    } catch {
+                        openError = error.localizedDescription
+                    }
+                }
+                return
+            }
             // LocalDevVPN returns here via altload:// after switching the VPN on.
             guard url.scheme == "altload" else { return }
             install.resumeWhenVPNReady()
         }
+        .alert("Couldn't open the IPA", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
+            Button("OK") { openError = nil }
+        } message: { Text(openError ?? "") }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { AltServerHost.shared.refresh() }
         }

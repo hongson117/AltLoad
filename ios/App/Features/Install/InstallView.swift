@@ -12,6 +12,7 @@ struct InstallView: View {
     @AppStorage(StoreApp.defaultsKey) private var selectedRaw = StoreApp.altstore.rawValue
     @State private var showImporter = false
     @State private var importError: String?
+    @State private var importing = false
     /// Unofficial fork: the tvOS IPA picked for the Apple TV (copied into the IPA cache).
     /// Unofficial fork: the last tvOS IPA picked, remembered across launches.
     @AppStorage("tvIPA.file") private var tvIPAFile = ""
@@ -112,17 +113,31 @@ struct InstallView: View {
                 vpnActive = LocalDevVPN.isActive
                 Task { await controller.checkDevice(store) }
             }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: [.ipa, .zip, .data]) { result in
+            .fileImporter(isPresented: $showImporter, allowedContentTypes: UTType.ipaPickerTypes) { result in
                 switch result {
                 case .success(let url):
-                    do {
-                        let imported = try StoreCatalog.importIPA(from: url)
-                        if isAppleTV { tvIPA = imported } else { controller.begin(.ipa(imported)) }
-                    } catch {
-                        importError = error.localizedDescription
+                    importing = true
+                    Task {
+                        defer { importing = false }
+                        do {
+                            let imported = try await StoreCatalog.importIPAAsync(from: url)
+                            if isAppleTV { tvIPA = imported } else { controller.begin(.ipa(imported)) }
+                        } catch {
+                            importError = error.localizedDescription
+                        }
                     }
                 case .failure(let error):
                     importError = error.localizedDescription
+                }
+            }
+            .overlay {
+                if importing {
+                    ZStack {
+                        Color.black.opacity(0.35).ignoresSafeArea()
+                        ProgressView("Importing IPA…")
+                            .padding(24)
+                            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
+                    }
                 }
             }
             .alert("Couldn't import the IPA", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {

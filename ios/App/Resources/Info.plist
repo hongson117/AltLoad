@@ -99,6 +99,21 @@
     <key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
     <string>AltLoad can use location to keep running in the background while you complete pairing in Settings.</string>
     <!-- Declares .ipa so Files lets it be picked instead of greying it out. -->
+    <key>CFBundleDocumentTypes</key>
+    <array>
+        <dict>
+            <key>CFBundleTypeName</key>
+            <string>iOS / tvOS App</string>
+            <key>CFBundleTypeRole</key>
+            <string>Viewer</string>
+            <key>LSHandlerRank</key>
+            <string>Alternate</string>
+            <key>LSItemContentTypes</key>
+            <array>
+                <string>com.apple.itunes.ipa</string>
+            </array>
+        </dict>
+    </array>
     <key>UTImportedTypeDeclarations</key>
     <array>
         <dict>

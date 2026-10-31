@@ -5,6 +5,14 @@ import UniformTypeIdentifiers
 extension UTType {
     /// .ipa, declared in Info.plist so Files lets it be picked.
     static let ipa = UTType(importedAs: "com.apple.itunes.ipa", conformingTo: .zip)
+    /// Unofficial fork: everything the IPA picker accepts. The system may resolve .ipa to a
+    /// different/dynamic type than ours, so .item keeps the file selectable; the extension is
+    /// checked after picking.
+    static var ipaPickerTypes: [UTType] {
+        var types: [UTType] = [.ipa]
+        if let byExt = UTType(filenameExtension: "ipa"), byExt != .ipa { types.append(byExt) }
+        return types + [.zip, .data, .item]
+    }
 }
 
 /// The stores AltLoad installs. AltStore is the default.
@@ -405,6 +413,11 @@ enum StoreCatalog {
         for old in files.dropFirst(2) where old != keeping {
             try? FileManager.default.removeItem(at: old)
         }
+    }
+
+    /// Unofficial fork: `importIPA` off the main thread (big IPAs / iCloud downloads froze the UI).
+    static func importIPAAsync(from url: URL) async throws -> URL {
+        try await Task.detached(priority: .userInitiated) { try importIPA(from: url) }.value
     }
 
     /// Copies an IPA picked in Files into the cache so it can be re-signed later.
