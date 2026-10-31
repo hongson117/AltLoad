@@ -20,6 +20,8 @@ struct InstallView: View {
     var body: some View {
         NavigationStack {
             AuroraScreen {
+                devicePicker
+
                 storeMenu
 
                 hero
@@ -119,6 +121,27 @@ struct InstallView: View {
     // MARK: - Store picker
 
     /// One dropdown for every store, grouped by family.
+    /// Unofficial fork: install to this iPhone or to a paired Apple TV.
+    @ViewBuilder
+    private var devicePicker: some View {
+        let tvs = pairings.items.filter(\.isAppleTV)
+        if !tvs.isEmpty {
+            Picker("Install to", selection: $controller.device) {
+                Text("This iPhone").tag(InstallDevice.thisIPhone)
+                ForEach(tvs) { tv in
+                    Text(tv.displayName).tag(InstallDevice.appleTV(tv.id))
+                }
+            }
+            .pickerStyle(.segmented)
+            if controller.device != .thisIPhone {
+                Text("Apple TV needs a tvOS IPA (pick one from Files). Keep the Apple TV awake on the same Wi-Fi; LocalDevVPN isn't needed.")
+                    .font(.caption)
+                    .foregroundStyle(Aurora.secondaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+
     private var storeMenu: some View {
         Menu {
             Section("AltStore") {
@@ -312,7 +335,7 @@ struct InstallView: View {
                     .contextMenu {
                         if let target = app.refreshTarget {
                             Button("Refresh", systemImage: "arrow.triangle.2.circlepath") {
-                                controller.begin(target)
+                                controller.device = app.device; controller.begin(target)
                             }
                         }
                         Button("Stop Tracking", systemImage: "minus.circle", role: .destructive) {
@@ -338,13 +361,13 @@ struct InstallView: View {
         ) {
             if let target = app.refreshTarget {
                 if app.isExpired {
-                    PillButton(caption: "Expired", title: "Refresh", tint: Aurora.danger) { controller.begin(target) }
+                    PillButton(caption: "Expired", title: "Refresh", tint: Aurora.danger) { controller.device = app.device; controller.begin(target) }
                 } else if let store = app.store, controller.updateAvailable(store) {
-                    PillButton(title: "Update") { controller.begin(target) }
+                    PillButton(title: "Update") { controller.device = app.device; controller.begin(target) }
                 } else if let days = app.daysLeft {
-                    PillButton(caption: "Expires in", title: "\(days) day\(days == 1 ? "" : "s")") { controller.begin(target) }
+                    PillButton(caption: "Expires in", title: "\(days) day\(days == 1 ? "" : "s")") { controller.device = app.device; controller.begin(target) }
                 } else {
-                    PillButton(title: "Refresh") { controller.begin(target) }
+                    PillButton(title: "Refresh") { controller.device = app.device; controller.begin(target) }
                 }
             } else {
                 // An IPA whose cached file is gone: it has to be picked again.
@@ -358,9 +381,10 @@ struct InstallView: View {
         if app.store == nil && app.refreshTarget == nil {
             return "Version \(app.version) · Pick the IPA again to refresh"
         }
-        guard let expiration = app.expiration else { return "Version \(app.version)" }
+        let on = app.deviceName.map { " · \($0)" } ?? ""
+        guard let expiration = app.expiration else { return "Version \(app.version)\(on)" }
         let when = expiration.formatted(.relative(presentation: .named))
-        return "Version \(app.version) · \(app.isExpired ? "Expired" : "Expires") \(when)"
+        return "Version \(app.version)\(on) · \(app.isExpired ? "Expired" : "Expires") \(when)"
     }
 
     // MARK: - Checklist

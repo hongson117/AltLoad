@@ -7,6 +7,21 @@ import UserNotifications
 struct SelfEndpoint: Sendable {
     let host: String
     let port: Int
+    /// TXT "identifier" / "authTag" of `_remotepairing._tcp` (Apple TV over LAN).
+    var identifier: String? = nil
+    var authTag: String? = nil
+}
+
+/// Unofficial fork: where an install goes.
+enum InstallDevice: Hashable {
+    case thisIPhone
+    /// An Apple TV, by its `SavedPairing.id`.
+    case appleTV(String)
+
+    var pairingID: String? {
+        if case .appleTV(let id) = self { return id }
+        return nil
+    }
 }
 
 /// What an install flow signs and installs: a store's newest release, or an IPA the user picked.
@@ -104,8 +119,12 @@ struct InstalledApp: Codable, Equatable, Identifiable {
     var ipaFile: String? = nil
     /// The store it was installed as, so a nightly refreshes as a nightly.
     var channel: String? = nil
+    /// Unofficial fork: the Apple TV pairing it was installed to (nil = this iPhone).
+    var deviceID: String? = nil
+    var deviceName: String? = nil
 
-    var id: String { bundleID }
+    var id: String { deviceID.map { "\(bundleID)@\($0)" } ?? bundleID }
+    var device: InstallDevice { deviceID.map(InstallDevice.appleTV) ?? .thisIPhone }
 
     var store: StoreApp? { StoreApp.matching(bundleID: bundleID) }
 
@@ -218,6 +237,12 @@ final class InstallController: ObservableObject {
     @Published private(set) var catalogErrors: [StoreApp: String] = [:]
     /// Everything AltLoad installed, newest first.
     @Published private(set) var apps: [InstalledApp] = []
+
+    /// Unofficial fork: the device the next install goes to.
+    @Published var device: InstallDevice = UserDefaults.standard.string(forKey: "installDeviceTV")
+        .map(InstallDevice.appleTV) ?? .thisIPhone {
+        didSet { UserDefaults.standard.set(device.pairingID, forKey: "installDeviceTV") }
+    }
     @Published var twoFactor: TwoFactorPrompt?
     @Published var revoke: RevokePrompt?
     /// Where the install is, for the progress bar.
@@ -371,7 +396,7 @@ final class InstallController: ObservableObject {
 
     /// Stops listing an app. It stays on the iPhone until the user deletes it there.
     func forget(_ app: InstalledApp) {
-        apps.removeAll { $0.bundleID == app.bundleID }
+        apps.removeAll { $0.id == app.id }
         save()
         UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [reminderID(app)])
     }
@@ -481,7 +506,13 @@ final class InstallController: ObservableObject {
     }
 
     private func run(_ credentials: AppleIDCredentials, target: InstallTarget, ipaOverride: URL? = nil, skipVPNCheck: Bool = false) async {
-        guard let pairing = PairingStore.shared.selfPairing else {
+        let device = self.device
+        let tvPairing = device.pairingID.flatMap { id in PairingStore.shared.items.first { $0.id == id } }
+        if device != .thisIPhone && tvPairing == nil {
+            phase = .failed("That Apple TV's pairing is gone. Pair it again in Tools › Pair.")
+            return
+        }
+        guard let pairing = tvPairing ?? PairingStore.shared.selfPairing else {
             phase = .failed("There's no pairing file for this iPhone yet. Create one in Tools › Pair first.")
             return
         }
@@ -527,21 +558,33 @@ final class InstallController: ObservableObject {
         }
 
         // 2. LocalDevVPN has to be on so 10.7.0.1 loops back into this iPhone.
+        //    An Apple TV is reached directly over the LAN instead (no VPN).
         enter(.vpn)
-        if !skipVPNCheck && !LocalDevVPN.isActive {
-            pending = (credentials, target, ipa)
-            phase = .needsVPN
-            return
+        let endpoints: [SelfEndpoint]
+        if tvPairing != nil {
+            phase = .working("Looking for the Apple TV…", nil)
+            endpoints = await AppleTVTunnelResolver.resolve(timeout: 6)
+            if endpoints.isEmpty {
+                phase = .failed("Couldn't find the Apple TV on this network. Wake it up, keep it on the same Wi-Fi as this iPhone, and try again.")
+                return
+            }
+        } else {
+            if !skipVPNCheck && !LocalDevVPN.isActive {
+                pending = (credentials, target, ipa)
+                phase = .needsVPN
+                return
+            }
+            endpoints = [SelfEndpoint(host: LocalDevVPN.targetIP, port: LocalDevVPN.remotePairingPort)]
         }
-        let endpoints = [SelfEndpoint(host: LocalDevVPN.targetIP, port: LocalDevVPN.remotePairingPort)]
 
         // 3. Rust does the rest.
         enter(.link)
-        phase = .working("Connecting to this device…", nil)
+        phase = .working(tvPairing == nil ? "Connecting to this device…" : "Connecting to the Apple TV…", nil)
         let outcome = await runSession(
             credentials: credentials,
             pairingPath: pairing.fileURL.path,
             endpoints: endpoints,
+            tvDeviceName: tvPairing?.displayName,
             ipa: ipa,
             fallbackName: target.title)
 
@@ -549,17 +592,21 @@ final class InstallController: ObservableObject {
         case .installed(var app):
             if case .ipa(let url) = target { app.ipaFile = url.lastPathComponent }
             if case .store(let store) = target { app.channel = store.rawValue }
+            app.deviceID = tvPairing?.id
+            app.deviceName = tvPairing?.displayName
             // SideStore-family apps need this iPhone's pairing file in their Documents.
-            if PairingDestination.isSideStoreFamily(app.bundleID) {
+            if tvPairing != nil {
+                // Nothing to place on an Apple TV.
+            } else if PairingDestination.isSideStoreFamily(app.bundleID) {
                 await placePairingFile(in: app.bundleID, pairing: pairing.fileURL)
             } else if app.store == .sidestoreLC {
                 pairingNote = "In LiveContainer, open SideStore and import the pairing file from Files › On My iPhone › AltLoad."
             }
-            apps.removeAll { $0.bundleID == app.bundleID }
+            apps.removeAll { $0.id == app.id }
             apps.insert(app, at: 0)
             save()
             scheduleExpiryReminder(for: app)
-            if let store = app.store { presence[store] = .installed(version: app.version) }
+            if tvPairing == nil, let store = app.store { presence[store] = .installed(version: app.version) }
             phase = .success(app)
         case .failed(let message):
             if message == "Cancelled." {
@@ -581,6 +628,7 @@ final class InstallController: ObservableObject {
         credentials: AppleIDCredentials,
         pairingPath: String,
         endpoints: [SelfEndpoint],
+        tvDeviceName: String? = nil,
         ipa: URL,
         fallbackName: String
     ) async -> Outcome {
@@ -593,7 +641,8 @@ final class InstallController: ObservableObject {
         let sessionBits = UInt(bitPattern: session)
         let anisette = await AnisetteServers.shared.signInList(preferred: anisetteURL)
         let serverID = Self.serverID
-        let deviceName = UIDevice.current.name
+        let deviceName = tvDeviceName ?? UIDevice.current.name
+        let devicePlatform: Int32 = tvDeviceName == nil ? 0 : 1
         let capabilities = EntitlementSettings.shared.requestValue
         let extensionsMode = Int32(ExtensionsMode.saved.rawValue)
 
@@ -615,8 +664,8 @@ final class InstallController: ObservableObject {
                     endpointBuffer[i] = AltLoadEndpoint(
                         host: c(e.host),
                         port: UInt16(clamping: e.port),
-                        identifier: nil,
-                        auth_tag: nil)
+                        identifier: e.identifier.flatMap { c($0) },
+                        auth_tag: e.authTag.flatMap { c($0) })
                 }
 
                 var config = AltLoadInstallConfig(
@@ -632,7 +681,8 @@ final class InstallController: ObservableObject {
                     machine_name: c("AltLoad"),
                     server_id: c(serverID),
                     capabilities: c(capabilities),
-                    extensions_mode: extensionsMode)
+                    extensions_mode: extensionsMode,
+                    device_platform: devicePlatform)
 
                 var result = AltLoadInstallResult()
                 let rc = altload_install_session_run(

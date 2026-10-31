@@ -62,7 +62,7 @@ enum DeviceOps {
                         endpoints: endpointPointer,
                         endpoint_count: 1,
                         ipa_path: nil, device_name: nil, machine_name: nil, server_id: nil,
-                        capabilities: nil, extensions_mode: 0)
+                        capabilities: nil, extensions_mode: 0, device_platform: 0)
                     let ctx = Unmanaged.passUnretained(box).toOpaque()
                     return altload_device_run(&config, json, deviceProgressCallback, ctx, &out)
                 }

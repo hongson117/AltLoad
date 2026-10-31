@@ -10,7 +10,7 @@ import UserNotifications
 final class PairingController: ObservableObject {
 
     static let shared = PairingController()
-    static let taskIdentifier = (Bundle.main.bundleIdentifier ?? "com.mirazbakis.altload") + ".pairing"
+    static let taskIdentifier = (Bundle.main.bundleIdentifier ?? "com.hongson117.tvsideload") + ".pairing"
 
     enum Phase: Equatable {
         case idle

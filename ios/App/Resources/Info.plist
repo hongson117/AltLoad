@@ -5,7 +5,7 @@
     <key>CFBundleDevelopmentRegion</key>
     <string>en</string>
     <key>CFBundleDisplayName</key>
-    <string>AltLoad</string>
+    <string>TV Sideload</string>
     <key>CFBundleExecutable</key>
     <string>$(EXECUTABLE_NAME)</string>
     <key>CFBundleIdentifier</key>
@@ -74,6 +74,7 @@
     <array>
         <string>_remotepairing-pairable-host._tcp</string>
         <string>_remotepairing-manual-pairing._tcp</string>
+        <string>_remotepairing._tcp</string>
         <!-- AltLoad's on-device AltServer, found by AltStore over Wi-Fi. -->
         <string>_altserver._tcp</string>
         <!-- Throwaway type used only to trigger the Local Network prompt. -->
