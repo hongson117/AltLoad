@@ -122,6 +122,16 @@ struct InstalledApp: Codable, Equatable, Identifiable {
     /// Unofficial fork: the Apple TV pairing it was installed to (nil = this iPhone).
     var deviceID: String? = nil
     var deviceName: String? = nil
+    /// Unofficial fork: the original IPA kept for this app on this Apple TV
+    /// (StoreCatalog.cacheDirectory/tv/…), re-signed on Refresh.
+    var tvIPAFile: String? = nil
+
+    /// The cached original IPA for an Apple TV app, if it's still there.
+    var tvCachedIPA: URL? {
+        guard deviceID != nil, let tvIPAFile else { return nil }
+        let url = StoreCatalog.cacheDirectory.appendingPathComponent("tv").appendingPathComponent(tvIPAFile)
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
 
     var id: String { deviceID.map { "\(bundleID)@\($0)" } ?? bundleID }
     var device: InstallDevice { deviceID.map(InstallDevice.appleTV) ?? .thisIPhone }
@@ -137,6 +147,7 @@ struct InstalledApp: Codable, Equatable, Identifiable {
 
     /// How to sign this app again.
     var refreshTarget: InstallTarget? {
+        if let cached = tvCachedIPA { return .ipa(cached) }
         if let channel, let chosen = StoreApp(rawValue: channel) { return .store(chosen) }
         if let store { return .store(store) }
         guard let ipaFile else { return nil }
@@ -281,6 +292,12 @@ final class InstallController: ObservableObject {
     private var session: OpaquePointer?
     /// Unofficial fork: true during an automatic Apple TV refresh (no UI; 2FA prompts abort).
     private var headless = false
+    /// Unofficial fork: install with installation_proxy Upgrade (Refresh keeps app data).
+    private var upgradeInstall = false
+    /// Unofficial fork: the Apple TV app being refreshed in place (compact UI), or nil.
+    @Published private(set) var refreshingApp: InstalledApp?
+    /// Unofficial fork: a short message shown as a toast after a refresh.
+    @Published var toast: TVToast?
     /// Install parked at `.needsVPN`, with the IPA already downloaded.
     private var pending: (credentials: AppleIDCredentials, target: InstallTarget, ipa: URL)?
     private let appsKey = "installed.apps"
@@ -600,10 +617,18 @@ final class InstallController: ObservableObject {
 
         switch outcome {
         case .installed(var app):
-            if case .ipa(let url) = target { app.ipaFile = url.lastPathComponent }
+            if case .ipa(let url) = target, url.deletingLastPathComponent().lastPathComponent != "tv" {
+                app.ipaFile = url.lastPathComponent
+            }
             if case .store(let store) = target { app.channel = store.rawValue }
             app.deviceID = tvPairing?.id
             app.deviceName = tvPairing?.displayName
+            if let tvID = tvPairing?.id {
+                app.tvIPAFile = Self.cacheTVIPA(ipa, bundleID: app.bundleID, tvID: tvID)
+                    ?? apps.first { $0.id == app.id }?.tvIPAFile
+                if app.ipaFile == nil { app.ipaFile = apps.first { $0.id == app.id }?.ipaFile }
+                if app.channel == nil { app.channel = apps.first { $0.id == app.id }?.channel }
+            }
             // SideStore-family apps need this iPhone's pairing file in their Documents.
             if tvPairing != nil {
                 // Nothing to place on an Apple TV.
@@ -654,6 +679,7 @@ final class InstallController: ObservableObject {
         let serverID = Self.serverID
         let deviceName = tvDeviceName ?? UIDevice.current.name
         let devicePlatform: Int32 = tvDeviceName == nil ? 0 : 1
+        let upgradeFlag: Int32 = upgradeInstall ? 1 : 0
         let capabilities = EntitlementSettings.shared.requestValue
         let extensionsMode = Int32(ExtensionsMode.saved.rawValue)
 
@@ -693,7 +719,8 @@ final class InstallController: ObservableObject {
                     server_id: c(serverID),
                     capabilities: c(capabilities),
                     extensions_mode: extensionsMode,
-                    device_platform: devicePlatform)
+                    device_platform: devicePlatform,
+                    upgrade: upgradeFlag)
 
                 var result = AltLoadInstallResult()
                 let rc = altload_install_session_run(
@@ -822,17 +849,9 @@ final class InstallController: ObservableObject {
         await withTaskCancellationHandler {
             for app in tvApps {
                 if Task.isCancelled { result.failed.append("\(app.name): time ran out"); continue }
-                guard let target = app.refreshTarget else {
-                    result.failed.append("\(app.name): its IPA is no longer cached")
-                    continue
-                }
-                device = app.device
-                configureSteps(for: target)
-                await run(credentials, target: target)
-                switch phase {
+                switch await refreshOneTV(app, credentials: credentials) {
                 case .success: result.refreshed.append(app.name)
-                case .failed(let message): result.failed.append("\(app.name): \(message)")
-                default: result.failed.append("\(app.name): cancelled")
+                case .failure(let error): result.failed.append("\(app.name): \(error.message)")
                 }
                 phase = .idle
             }
@@ -840,6 +859,83 @@ final class InstallController: ObservableObject {
             Task { @MainActor in InstallController.shared.cancel() }
         }
         return result
+    }
+
+    // MARK: - Apple TV in-place refresh (unofficial fork)
+
+    struct RefreshError: Error { let message: String }
+
+    /// Copies the original IPA to cacheDirectory/tv/<bundleID>@<tvID>.ipa. Returns the file name.
+    static func cacheTVIPA(_ ipa: URL, bundleID: String, tvID: String) -> String? {
+        let dir = StoreCatalog.cacheDirectory.appendingPathComponent("tv")
+        let name = "\(bundleID)@\(tvID)".replacingOccurrences(of: "/", with: "_") + ".ipa"
+        let dest = dir.appendingPathComponent(name)
+        if ipa.standardizedFileURL == dest.standardizedFileURL { return name }
+        let fm = FileManager.default
+        do {
+            try fm.createDirectory(at: dir, withIntermediateDirectories: true)
+            let tmp = dir.appendingPathComponent(".\(UUID().uuidString).tmp")
+            try fm.copyItem(at: ipa, to: tmp)
+            if fm.fileExists(atPath: dest.path) { try fm.removeItem(at: dest) }
+            try fm.moveItem(at: tmp, to: dest)
+            return name
+        } catch {
+            return nil
+        }
+    }
+
+    /// The single refresh path (button, background task, Shortcut): reuses the saved
+    /// session/certificate, re-fetches the profile, re-signs the cached original IPA and
+    /// upgrades it over the installed app on the Apple TV, keeping its data.
+    func refreshOneTV(_ app: InstalledApp, credentials: AppleIDCredentials) async -> Result<InstalledApp, RefreshError> {
+        guard app.deviceID != nil else { return .failure(RefreshError(message: "Not an Apple TV app.")) }
+        let ipa: URL
+        let target: InstallTarget
+        if let cached = app.tvCachedIPA {
+            ipa = cached; target = .ipa(cached)
+        } else if let t = app.refreshTarget, case .ipa(let url) = t {
+            ipa = url; target = t
+        } else if let t = app.refreshTarget, case .store(let store) = t, let cached = StoreCatalog.newestCachedIPA(store) {
+            ipa = cached; target = t
+        } else {
+            return .failure(RefreshError(message: "Its original IPA is no longer cached. Pick it again and install."))
+        }
+        let savedDevice = device
+        device = app.device
+        upgradeInstall = true
+        defer { upgradeInstall = false; device = savedDevice }
+        configureSteps(for: target)
+        await run(credentials, target: target, ipaOverride: ipa)
+        switch phase {
+        case .success(let fresh): return .success(fresh)
+        case .failed(let message): return .failure(RefreshError(message: message))
+        default: return .failure(RefreshError(message: "Cancelled."))
+        }
+    }
+
+    /// Refresh button: compact progress + toast instead of the install wizard.
+    /// Falls back to the full flow when no Apple ID password is saved.
+    func refreshTV(_ app: InstalledApp) {
+        guard !isBusy, flow == nil, refreshingApp == nil else { return }
+        let email = AppleIDStore.email
+        guard !email.isEmpty, let password = AppleIDStore.password(for: email) else {
+            if let target = app.refreshTarget { device = app.device; begin(target) }
+            return
+        }
+        refreshingApp = app
+        Task {
+            let outcome = await refreshOneTV(app, credentials: AppleIDCredentials(email: email, password: password))
+            refreshingApp = nil
+            phase = .idle
+            switch outcome {
+            case .success(let fresh):
+                let expiry = fresh.expiration.map { $0.formatted(date: .abbreviated, time: .shortened) } ?? "unknown"
+                toast = TVToast(success: true, text: "\(fresh.name) refreshed — expires \(expiry)")
+                AppleTVAutoRefresh.shared.reschedule()
+            case .failure(let error):
+                toast = TVToast(success: false, text: "\(app.name): \(error.message)")
+            }
+        }
     }
 
     // MARK: - Reminder
@@ -894,4 +990,11 @@ private let installPromptCallback: AltLoadPromptCb = { ctx, kind, json in
 private func string(_ ptr: UnsafeMutablePointer<CChar>?) -> String {
     guard let ptr else { return "" }
     return String(cString: ptr)
+}
+
+/// Unofficial fork: toast shown after an Apple TV refresh.
+struct TVToast: Identifiable, Equatable {
+    let id = UUID()
+    let success: Bool
+    let text: String
 }

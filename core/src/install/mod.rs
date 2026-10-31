@@ -108,6 +108,8 @@ pub struct AltLoadInstallConfig {
     /// Unofficial fork: target platform. 0 = iOS (this iPhone, via LocalDevVPN),
     /// 1 = tvOS (an Apple TV reached directly over the LAN).
     pub device_platform: i32,
+    /// Unofficial fork: 1 = refresh (installation_proxy Upgrade over the existing app, keeps data).
+    pub upgrade: i32,
 }
 
 #[repr(C)]
@@ -216,6 +218,7 @@ struct Config {
     capabilities: Vec<String>,
     extensions: ExtensionsMode,
     platform: TargetPlatform,
+    upgrade: bool,
 }
 
 /// Which kind of device the install goes to.
@@ -271,6 +274,7 @@ impl Config {
                 .collect(),
             extensions: ExtensionsMode::from_raw(c.extensions_mode),
             platform: TargetPlatform::from_raw(c.device_platform),
+            upgrade: c.upgrade != 0,
         })
     }
 }
@@ -591,9 +595,10 @@ async fn sign_and_install(
     check()?;
 
     // 6. AFC upload + installation_proxy, through the tunnel.
-    cbs.progress("Installing…", 0.0);
-    isideload::sideload::install::install_app_rsd(adapter, handshake, &signed_dir, move |p: u64| {
-        cbs.progress("Installing…", (p as f64 / 100.0).clamp(0.0, 1.0));
+    let label = if cfg.upgrade { "Installing update…" } else { "Installing…" };
+    cbs.progress(label, 0.0);
+    isideload::sideload::install::install_app_rsd_mode(adapter, handshake, &signed_dir, cfg.upgrade, move |p: u64| {
+        cbs.progress(label, (p as f64 / 100.0).clamp(0.0, 1.0));
     })
     .await
     .map_err(|e| err("Install failed", e))?;

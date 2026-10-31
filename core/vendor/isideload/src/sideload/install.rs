@@ -72,12 +72,23 @@ pub async fn install_app(
     Ok(())
 }
 
-/// Installs an ***already signed*** app onto your device.
-/// To sign and install an app, see [`crate::sideload::sideload_app`]
+/// Unofficial fork: `install_app_rsd`, or Upgrade over the installed app when `upgrade`.
 pub async fn install_app_rsd(
     provider: &mut impl RsdProvider,
     handshake: &mut RsdHandshake,
     app_path: &Path,
+    progress_callback: impl Fn(u64) + Send + Sync,
+) -> Result<(), Report> {
+    install_app_rsd_mode(provider, handshake, app_path, false, progress_callback).await
+}
+
+/// Installs an ***already signed*** app onto your device.
+/// To sign and install an app, see [`crate::sideload::sideload_app`]
+pub async fn install_app_rsd_mode(
+    provider: &mut impl RsdProvider,
+    handshake: &mut RsdHandshake,
+    app_path: &Path,
+    upgrade: bool,
     progress_callback: impl Fn(u64) + Send + Sync,
 ) -> Result<(), Report> {
     let mut afc_client = AfcClient::connect_rsd(provider, handshake)
@@ -111,17 +122,20 @@ pub async fn install_app_rsd(
         "PackageType": "Developer"
     });
 
-    instproxy_client
-        .install_with_callback(
-            dir,
-            Some(plist::Value::Dictionary(options)),
-            async |(percentage, _)| {
-                progress_callback((70.0 + 0.3 * percentage as f64) as u64);
-            },
-            (),
-        )
-        .await
-        .map_err(Error::IdeviceError)?;
+    let cb = async |(percentage, _): (u64, ())| {
+        progress_callback((70.0 + 0.3 * percentage as f64) as u64);
+    };
+    if upgrade {
+        instproxy_client
+            .upgrade_with_callback(dir, Some(plist::Value::Dictionary(options)), cb, ())
+            .await
+            .map_err(Error::IdeviceError)?;
+    } else {
+        instproxy_client
+            .install_with_callback(dir, Some(plist::Value::Dictionary(options)), cb, ())
+            .await
+            .map_err(Error::IdeviceError)?;
+    }
 
     Ok(())
 }

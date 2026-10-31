@@ -31,6 +31,23 @@ struct InstallView: View {
     private var store: StoreApp { StoreApp(rawValue: selectedRaw) ?? .altstore }
 
     var body: some View {
+        mainBody
+            .overlay(alignment: .bottom) { TVRefreshOverlay(controller: controller) }
+            .fullScreenCover(item: Binding(
+                get: { controller.flow == nil && controller.refreshingApp != nil ? controller.twoFactor : nil },
+                set: { controller.twoFactor = $0 })) { prompt in
+                TwoFactorSheet(prompt: prompt) { controller.respond($0) }
+                    .auroraTheme()
+            }
+            .fullScreenCover(item: Binding(
+                get: { controller.flow == nil && controller.refreshingApp != nil ? controller.revoke : nil },
+                set: { controller.revoke = $0 })) { prompt in
+                RevokeSheet(prompt: prompt) { controller.respond($0) }
+                    .auroraTheme()
+            }
+    }
+
+    private var mainBody: some View {
         NavigationStack {
             AuroraScreen {
                 devicePicker
@@ -437,7 +454,7 @@ struct InstallView: View {
                     .contextMenu {
                         if let target = app.refreshTarget {
                             Button("Refresh", systemImage: "arrow.triangle.2.circlepath") {
-                                controller.device = app.device; controller.begin(target)
+                                refresh(app, target)
                             }
                         }
                         Button("Stop Tracking", systemImage: "minus.circle", role: .destructive) {
@@ -453,6 +470,15 @@ struct InstallView: View {
         }
     }
 
+    /// Unofficial fork: Apple TV apps refresh in place (compact progress + toast).
+    private func refresh(_ app: InstalledApp, _ target: InstallTarget) {
+        if app.deviceID != nil, !(app.store.map { controller.updateAvailable($0) } ?? false) {
+            controller.refreshTV(app)
+        } else {
+            controller.device = app.device; controller.begin(target)
+        }
+    }
+
     private func appRow(_ app: InstalledApp) -> some View {
         AppBannerRow(
             name: app.name,
@@ -463,13 +489,13 @@ struct InstallView: View {
         ) {
             if let target = app.refreshTarget {
                 if app.isExpired {
-                    PillButton(caption: "Expired", title: "Refresh", tint: Aurora.danger) { controller.device = app.device; controller.begin(target) }
+                    PillButton(caption: "Expired", title: "Refresh", tint: Aurora.danger) { refresh(app, target) }
                 } else if let store = app.store, controller.updateAvailable(store) {
-                    PillButton(title: "Update") { controller.device = app.device; controller.begin(target) }
+                    PillButton(title: "Update") { refresh(app, target) }
                 } else if let days = app.daysLeft {
-                    PillButton(caption: "Expires in", title: "\(days) day\(days == 1 ? "" : "s")") { controller.device = app.device; controller.begin(target) }
+                    PillButton(caption: "Expires in", title: "\(days) day\(days == 1 ? "" : "s")") { refresh(app, target) }
                 } else {
-                    PillButton(title: "Refresh") { controller.device = app.device; controller.begin(target) }
+                    PillButton(title: "Refresh") { refresh(app, target) }
                 }
             } else {
                 // An IPA whose cached file is gone: it has to be picked again.
@@ -550,5 +576,67 @@ struct InstallView: View {
         f.locale = Locale(identifier: "en_US_POSIX")
         f.dateFormat = "yyyy-MM-dd"
         return f.date(from: String(s.prefix(10)))
+    }
+}
+
+/// Unofficial fork: compact progress card while an Apple TV app refreshes, then a toast.
+struct TVRefreshOverlay: View {
+    @ObservedObject var controller: InstallController
+
+    var body: some View {
+        Group {
+            if let app = controller.refreshingApp {
+                card(symbol: nil, tint: Aurora.accent) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Refreshing \(app.name)").font(.subheadline.weight(.semibold))
+                        Text(status).font(.caption).foregroundStyle(Aurora.secondaryText).lineLimit(1)
+                        if let fraction { ProgressView(value: fraction).tint(Aurora.accent) }
+                        else { ProgressView().progressViewStyle(.linear).tint(Aurora.accent) }
+                    }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            } else if let toast = controller.toast {
+                card(symbol: toast.success ? "checkmark.circle.fill" : "exclamationmark.triangle.fill",
+                     tint: toast.success ? .green : Aurora.danger) {
+                    Text(toast.text).font(.subheadline.weight(.medium)).lineLimit(3)
+                }
+                .onTapGesture { controller.toast = nil }
+                .task(id: toast.id) {
+                    try? await Task.sleep(for: .seconds(toast.success ? 5 : 8))
+                    if controller.toast?.id == toast.id { controller.toast = nil }
+                }
+                .transition(.move(edge: .bottom).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(duration: 0.35), value: controller.refreshingApp?.id)
+        .animation(.spring(duration: 0.35), value: controller.toast)
+        .padding(.horizontal, 16)
+        .padding(.bottom, 12)
+    }
+
+    private var status: String {
+        switch controller.phase {
+        case .checking: "Checking…"
+        case .downloading: "Preparing IPA…"
+        case .working(let text, _): text
+        default: "Starting…"
+        }
+    }
+
+    private var fraction: Double? {
+        if case .working(_, let f) = controller.phase { return f }
+        return nil
+    }
+
+    private func card<C: View>(symbol: String?, tint: Color, @ViewBuilder content: () -> C) -> some View {
+        HStack(spacing: 12) {
+            if let symbol { Image(systemName: symbol).font(.title3).foregroundStyle(tint) }
+            content()
+            Spacer(minLength: 0)
+        }
+        .padding(14)
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 18, style: .continuous))
+        .overlay(RoundedRectangle(cornerRadius: 18, style: .continuous).stroke(tint.opacity(0.35)))
+        .shadow(color: .black.opacity(0.25), radius: 12, y: 4)
     }
 }
