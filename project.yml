@@ -33,6 +33,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.hongson117.tvsideload
         INFOPLIST_FILE: ios/App/Resources/Info.plist
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         OTHER_LDFLAGS: "-lc++"
         GENERATE_INFOPLIST_FILE: NO
 

@@ -80,6 +80,8 @@ jobs:
           codesign --force --sign - --timestamp=none --generate-entitlement-der Payload/AltLoad.app
           zip -qry -X AltLoad.ipa Payload
           ls -lh AltLoad.ipa
+          test -f Payload/AltLoad.app/Assets.car
+          /usr/libexec/PlistBuddy -c 'Print :CFBundleIcons' Payload/AltLoad.app/Info.plist
 
       - name: Upload IPA (private, 1 day)
         uses: actions/upload-artifact@v4
