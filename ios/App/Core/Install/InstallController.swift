@@ -279,6 +279,8 @@ final class InstallController: ObservableObject {
     }
 
     private var session: OpaquePointer?
+    /// Unofficial fork: true during an automatic Apple TV refresh (no UI; 2FA prompts abort).
+    private var headless = false
     /// Install parked at `.needsVPN`, with the IPA already downloaded.
     private var pending: (credentials: AppleIDCredentials, target: InstallTarget, ipa: URL)?
     private let appsKey = "installed.apps"
@@ -614,6 +616,7 @@ final class InstallController: ObservableObject {
             apps.insert(app, at: 0)
             save()
             scheduleExpiryReminder(for: app)
+            if tvPairing != nil, !headless { AppleTVAutoRefresh.shared.reschedule() }
             if tvPairing == nil, let store = app.store { presence[store] = .installed(version: app.version) }
             phase = .success(app)
         case .failed(let message):
@@ -767,6 +770,7 @@ final class InstallController: ObservableObject {
     }
 
     fileprivate func presentPrompt(kind: Int32, json: Data) {
+        if headless { respond("abort"); return }
         switch kind {
         case 1:
             struct Payload: Decodable {
@@ -789,6 +793,53 @@ final class InstallController: ObservableObject {
         default:
             respond("abort")
         }
+    }
+
+    // MARK: - Apple TV auto-refresh (unofficial fork)
+
+    /// Re-signs and reinstalls every app installed to an Apple TV, without UI.
+    /// Needs the saved Apple ID password and an Apple TV reachable on the LAN.
+    func refreshAppleTVApps() async -> TVRefreshResult {
+        guard !isBusy, flow == nil else { return TVRefreshResult(skipped: "An install is in progress.") }
+        let tvApps = apps.filter { $0.deviceID != nil }
+        guard !tvApps.isEmpty else { return TVRefreshResult(skipped: "No apps installed to an Apple TV.") }
+        let email = AppleIDStore.email
+        guard !email.isEmpty, let password = AppleIDStore.password(for: email) else {
+            return TVRefreshResult(skipped: "Save your Apple ID password in TV Sideload (sign in with Remember) to refresh automatically.")
+        }
+        if await AppleTVTunnelResolver.resolve(timeout: 6).isEmpty {
+            return TVRefreshResult(skipped: "Apple TV isn't reachable on this Wi-Fi. Skipped.")
+        }
+        let credentials = AppleIDCredentials(email: email, password: password)
+        let savedDevice = device
+        headless = true
+        defer {
+            headless = false
+            device = savedDevice
+            phase = .idle
+        }
+        var result = TVRefreshResult()
+        await withTaskCancellationHandler {
+            for app in tvApps {
+                if Task.isCancelled { result.failed.append("\(app.name): time ran out"); continue }
+                guard let target = app.refreshTarget else {
+                    result.failed.append("\(app.name): its IPA is no longer cached")
+                    continue
+                }
+                device = app.device
+                configureSteps(for: target)
+                await run(credentials, target: target)
+                switch phase {
+                case .success: result.refreshed.append(app.name)
+                case .failed(let message): result.failed.append("\(app.name): \(message)")
+                default: result.failed.append("\(app.name): cancelled")
+                }
+                phase = .idle
+            }
+        } onCancel: {
+            Task { @MainActor in InstallController.shared.cancel() }
+        }
+        return result
     }
 
     // MARK: - Reminder

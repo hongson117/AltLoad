@@ -13,7 +13,16 @@ struct InstallView: View {
     @State private var showImporter = false
     @State private var importError: String?
     /// Unofficial fork: the tvOS IPA picked for the Apple TV (copied into the IPA cache).
-    @State private var tvIPA: URL?
+    /// Unofficial fork: the last tvOS IPA picked, remembered across launches.
+    @AppStorage("tvIPA.file") private var tvIPAFile = ""
+    private var tvIPA: URL? {
+        get {
+            guard !tvIPAFile.isEmpty else { return nil }
+            let url = StoreCatalog.cacheDirectory.appendingPathComponent(tvIPAFile)
+            return FileManager.default.fileExists(atPath: url.path) ? url : nil
+        }
+        nonmutating set { tvIPAFile = newValue?.lastPathComponent ?? "" }
+    }
     @State private var vpnActive = LocalDevVPN.isActive
     @Environment(\.scenePhase) private var scenePhase
 

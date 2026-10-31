@@ -2,7 +2,7 @@ import Foundation
 import Security
 
 /// Apple ID email in UserDefaults; password (only if the user opts in) in the Keychain,
-/// readable only while this device is unlocked and never synced.
+/// readable after the first unlock (for background refresh) and never synced.
 enum AppleIDStore {
     private static let emailKey = "appleID.email"
     private static let service = "AltLoad.AppleID"
@@ -22,8 +22,14 @@ enum AppleIDStore {
         ]
         var item: CFTypeRef?
         guard SecItemCopyMatching(query as CFDictionary, &item) == errSecSuccess,
-              let data = item as? Data else { return nil }
-        return String(data: data, encoding: .utf8)
+              let data = item as? Data, let password = String(data: data, encoding: .utf8) else { return nil }
+        // Unofficial fork: move older "when unlocked" items to "after first unlock" so the
+        // nightly Apple TV refresh can read it while the iPhone is locked.
+        if !UserDefaults.standard.bool(forKey: "appleID.accessMigrated") {
+            UserDefaults.standard.set(true, forKey: "appleID.accessMigrated")
+            savePassword(password, for: email)
+        }
+        return password
     }
 
     static func savePassword(_ password: String, for email: String) {
@@ -33,7 +39,7 @@ enum AppleIDStore {
             kSecAttrService as String: service,
             kSecAttrAccount as String: email,
             kSecValueData as String: Data(password.utf8),
-            kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
+            kSecAttrAccessible as String: kSecAttrAccessibleAfterFirstUnlockThisDeviceOnly
         ]
         SecItemAdd(attributes as CFDictionary, nil)
     }

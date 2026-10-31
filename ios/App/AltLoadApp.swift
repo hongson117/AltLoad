@@ -4,6 +4,7 @@ import SwiftUI
 struct AltLoadApp: App {
     init() {
         PairingController.shared.registerBackgroundTask()
+        AppleTVAutoRefresh.shared.register()
         // Be ready as soon as AltStore looks for an AltServer.
         AltServerHost.shared.startIfEnabled()
     }

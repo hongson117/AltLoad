@@ -7,6 +7,7 @@ struct SettingsView: View {
     @StateObject private var install = InstallController.shared
     @StateObject private var anisette = AnisetteServers.shared
     @StateObject private var account = CertificatesController.shared
+    @StateObject private var tvRefresh = AppleTVAutoRefresh.shared
     @State private var anisetteChoice = ""
     private static let customTag = "custom"
     @State private var appleID = AppleIDStore.email
@@ -25,6 +26,7 @@ struct SettingsView: View {
                 anisetteCard
                 vpnCard
                 sourcesCard
+                tvRefreshCard
                 keepAliveCard
             }
             .navigationTitle("Settings")
@@ -230,6 +232,32 @@ struct SettingsView: View {
             }
             .buttonStyle(AltLoadButtonStyle(prominent: false))
             footnote("AltLoad installs the newest build each source lists. If SideStore's source or repository is down, it falls back to a mirror, its GitHub releases and then a known-good build.")
+        }
+    }
+
+    /// Unofficial fork: daily Apple TV refresh.
+    private var tvRefreshCard: some View {
+        CardSection(title: "Apple TV Auto-Refresh", symbol: "appletv.fill") {
+            Toggle("Refresh daily", systemImage: "arrow.clockwise", isOn: $tvRefresh.enabled)
+                .frame(minHeight: 44)
+            DatePicker(selection: Binding(get: { tvRefresh.time }, set: { tvRefresh.time = $0 }),
+                       displayedComponents: .hourAndMinute) {
+                Label("Time", systemImage: "clock")
+            }
+            .disabled(!tvRefresh.enabled)
+            .frame(minHeight: 44)
+            Button {
+                Task { await tvRefresh.refreshNow() }
+            } label: {
+                Label(tvRefresh.isRunning ? "Refreshing…" : "Refresh Apple TV apps now", systemImage: "appletv")
+            }
+            .disabled(tvRefresh.isRunning)
+            .frame(minHeight: 44)
+            if let summary = tvRefresh.lastSummary { footnote(summary) }
+            if let last = tvRefresh.lastRun {
+                footnote("Last refresh: \(last.formatted(date: .abbreviated, time: .shortened))")
+            }
+            footnote("iOS runs the background refresh around this time when it can (keep the iPhone charging on Wi-Fi). The Apple TV must be awake on the same network and your Apple ID password saved. A reminder appears at this time if an Apple TV app expires within 2 days.")
         }
     }
 
