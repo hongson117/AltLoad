@@ -420,6 +420,20 @@ enum StoreCatalog {
         try await Task.detached(priority: .userInitiated) { try importIPA(from: url) }.value
     }
 
+    /// Unofficial fork: checks Payload/*.app/Info.plist says tvOS. Uses `unzip -p`-free logic:
+    /// reads the zip central directory for the app's Info.plist via the system's zip support.
+    static func validateTVOSIPAAsync(_ ipa: URL) async throws {
+        try await Task.detached(priority: .userInitiated) { try validateTVOSIPA(ipa) }.value
+    }
+
+    static func validateTVOSIPA(_ ipa: URL) throws {
+        guard let plist = ZipPeek.appInfoPlist(in: ipa) else { return } // can't tell; install step re-checks
+        let platforms = plist["CFBundleSupportedPlatforms"] as? [String] ?? []
+        let families = plist["UIDeviceFamily"] as? [Int] ?? []
+        if platforms.contains(where: { $0.lowercased().contains("appletv") }) || families.contains(3) { return }
+        throw CatalogError.notTVOS
+    }
+
     /// Copies an IPA picked in Files into the cache so it can be re-signed later.
     static func importIPA(from url: URL) throws -> URL {
         guard url.pathExtension.lowercased() == "ipa" else { throw CatalogError.notAnIPA }
@@ -445,10 +459,13 @@ enum StoreCatalog {
         case http(StoreApp, Int)
         case notListed(StoreApp)
         case notAnIPA
+        case notTVOS
         case repositoryDown(StoreApp)
 
         var errorDescription: String? {
             switch self {
+            case .notTVOS:
+                "This IPA is an iPhone/iPad app, not a tvOS app. Apple TV needs a tvOS build (UIDeviceFamily 3 / AppleTVOS)."
             case .repositoryDown(let store):
                 "\(store.name)'s repository is down right now and AltLoad has no copy saved. Try again later, or download the IPA elsewhere and pick it with Install IPA from Files."
             case .notAnIPA: "That file isn't an .ipa."

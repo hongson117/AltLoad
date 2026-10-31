@@ -113,22 +113,28 @@ struct InstallView: View {
                 vpnActive = LocalDevVPN.isActive
                 Task { await controller.checkDevice(store) }
             }
-            .fileImporter(isPresented: $showImporter, allowedContentTypes: UTType.ipaPickerTypes) { result in
-                switch result {
-                case .success(let url):
+            .sheet(isPresented: $showImporter) {
+                DocumentPicker(types: [.item]) { url in
+                    showImporter = false
                     importing = true
                     Task {
                         defer { importing = false }
                         do {
                             let imported = try await StoreCatalog.importIPAAsync(from: url)
-                            if isAppleTV { tvIPA = imported } else { controller.begin(.ipa(imported)) }
+                            if isAppleTV {
+                                try await StoreCatalog.validateTVOSIPAAsync(imported)
+                                tvIPA = imported
+                            } else {
+                                controller.begin(.ipa(imported))
+                            }
                         } catch {
                             importError = error.localizedDescription
                         }
                     }
-                case .failure(let error):
-                    importError = error.localizedDescription
+                } onCancel: {
+                    showImporter = false
                 }
+                .ignoresSafeArea()
             }
             .overlay {
                 if importing {

@@ -28,6 +28,11 @@ struct SettingsView: View {
                 sourcesCard
                 tvRefreshCard
                 keepAliveCard
+                Text(BuildInfo.text)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(Aurora.secondaryText)
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 8)
             }
             .navigationTitle("Settings")
             .navigationBarTitleDisplayMode(.inline)
