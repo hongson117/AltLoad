@@ -113,6 +113,8 @@
             <key>LSItemContentTypes</key>
             <array>
                 <string>com.apple.itunes.ipa</string>
+                <string>public.zip-archive</string>
+                <string>public.data</string>
             </array>
         </dict>
     </array>

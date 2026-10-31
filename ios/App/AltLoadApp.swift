@@ -25,7 +25,7 @@ struct RootView: View {
     @State private var tab: AppTab = .install
     @StateObject private var install = InstallController.shared
     @Environment(\.scenePhase) private var scenePhase
-    @State private var openError: String?
+    @State private var openAlert: (title: String, message: String)?
 
     var body: some View {
         TabView(selection: $tab) {
@@ -48,15 +48,19 @@ struct RootView: View {
         }
         .onOpenURL { url in
             // Unofficial fork: an .ipa shared / "Open in" from Files becomes the tvOS IPA.
-            if url.isFileURL && url.pathExtension.lowercased() == "ipa" {
+            if url.isFileURL {
                 Task {
                     do {
                         let imported = try await StoreCatalog.importIPAAsync(from: url)
+                        try await StoreCatalog.validateTVOSIPAAsync(imported)
                         UserDefaults.standard.set(imported.lastPathComponent, forKey: "tvIPA.file")
                         tab = .install
+                        openAlert = ("IPA imported", "\(url.lastPathComponent) is now the tvOS IPA. Pick your Apple TV on Install and tap Install to Apple TV.")
                     } catch {
-                        openError = error.localizedDescription
+                        openAlert = ("Couldn't open the IPA", "\(url.lastPathComponent): \(error.localizedDescription)")
                     }
+                    // Files/Share copies into Documents/Inbox; don't keep a second copy.
+                    if url.path.contains("/Inbox/") { try? FileManager.default.removeItem(at: url) }
                 }
                 return
             }
@@ -64,9 +68,9 @@ struct RootView: View {
             guard url.scheme == "altload" else { return }
             install.resumeWhenVPNReady()
         }
-        .alert("Couldn't open the IPA", isPresented: Binding(get: { openError != nil }, set: { if !$0 { openError = nil } })) {
-            Button("OK") { openError = nil }
-        } message: { Text(openError ?? "") }
+        .alert(openAlert?.title ?? "", isPresented: Binding(get: { openAlert != nil }, set: { if !$0 { openAlert = nil } })) {
+            Button("OK") { openAlert = nil }
+        } message: { Text(openAlert?.message ?? "") }
         .onChange(of: scenePhase) { _, phase in
             if phase == .active { AltServerHost.shared.refresh() }
         }

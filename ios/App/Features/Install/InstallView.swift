@@ -13,6 +13,7 @@ struct InstallView: View {
     @State private var showImporter = false
     @State private var importError: String?
     @State private var importing = false
+    @State private var importNotice: String?
     /// Unofficial fork: the tvOS IPA picked for the Apple TV (copied into the IPA cache).
     /// Unofficial fork: the last tvOS IPA picked, remembered across launches.
     @AppStorage("tvIPA.file") private var tvIPAFile = ""
@@ -124,6 +125,7 @@ struct InstallView: View {
                             if isAppleTV {
                                 try await StoreCatalog.validateTVOSIPAAsync(imported)
                                 tvIPA = imported
+                                importNotice = "\(url.lastPathComponent) is ready. Tap Install to Apple TV."
                             } else {
                                 controller.begin(.ipa(imported))
                             }
@@ -145,6 +147,11 @@ struct InstallView: View {
                             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 16))
                     }
                 }
+            }
+            .alert("IPA imported", isPresented: Binding(get: { importNotice != nil }, set: { if !$0 { importNotice = nil } })) {
+                Button("OK") { importNotice = nil }
+            } message: {
+                Text(importNotice ?? "")
             }
             .alert("Couldn't import the IPA", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
                 Button("OK") { importError = nil }
