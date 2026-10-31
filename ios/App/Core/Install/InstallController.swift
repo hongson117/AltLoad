@@ -410,6 +410,12 @@ final class InstallController: ObservableObject {
     // MARK: - Flow
 
     /// Opens the full-screen install flow for `target`.
+    /// Unofficial fork: true only when installing to this iPhone without its pairing file.
+    /// An Apple TV install uses the TV's own pairing file instead.
+    var needsSelfPairing: Bool {
+        device == .thisIPhone && PairingStore.shared.selfPairing == nil
+    }
+
     func begin(_ target: InstallTarget) {
         guard !isBusy else { return }
         pending = nil
@@ -420,7 +426,8 @@ final class InstallController: ObservableObject {
     }
 
     private func configureSteps(for target: InstallTarget) {
-        steps = InstallStep.allCases.filter { $0 != .pairing }
+        // Unofficial fork: an Apple TV is reached over the LAN, so no LocalDevVPN step.
+        steps = InstallStep.allCases.filter { $0 != .pairing && !(device != .thisIPhone && $0 == .vpn) }
         step = .download
         stepFraction = nil
     }
@@ -559,9 +566,9 @@ final class InstallController: ObservableObject {
 
         // 2. LocalDevVPN has to be on so 10.7.0.1 loops back into this iPhone.
         //    An Apple TV is reached directly over the LAN instead (no VPN).
-        enter(.vpn)
         let endpoints: [SelfEndpoint]
         if tvPairing != nil {
+            enter(.link)
             phase = .working("Looking for the Apple TV…", nil)
             endpoints = await AppleTVTunnelResolver.resolve(timeout: 6)
             if endpoints.isEmpty {
@@ -569,6 +576,7 @@ final class InstallController: ObservableObject {
                 return
             }
         } else {
+            enter(.vpn)
             if !skipVPNCheck && !LocalDevVPN.isActive {
                 pending = (credentials, target, ipa)
                 phase = .needsVPN

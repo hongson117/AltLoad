@@ -12,6 +12,8 @@ struct InstallView: View {
     @AppStorage(StoreApp.defaultsKey) private var selectedRaw = StoreApp.altstore.rawValue
     @State private var showImporter = false
     @State private var importError: String?
+    /// Unofficial fork: the tvOS IPA picked for the Apple TV (copied into the IPA cache).
+    @State private var tvIPA: URL?
     @State private var vpnActive = LocalDevVPN.isActive
     @Environment(\.scenePhase) private var scenePhase
 
@@ -22,43 +24,47 @@ struct InstallView: View {
             AuroraScreen {
                 devicePicker
 
-                storeMenu
+                if isAppleTV {
+                    appleTVContent
+                } else {
+                    storeMenu
 
-                hero
+                    hero
 
-                if pairings.selfPairing == nil {
-                    GlassCard(tint: Aurora.danger) {
-                        VStack(alignment: .leading, spacing: 6) {
-                            Label("Pair this iPhone first", systemImage: "link.badge.plus")
-                                .font(.headline)
-                            Text("AltLoad needs this iPhone's pairing file to talk to it, the way a computer would.")
-                                .font(.subheadline)
-                                .foregroundStyle(Aurora.secondaryText)
+                    if pairings.selfPairing == nil {
+                        GlassCard(tint: Aurora.danger) {
+                            VStack(alignment: .leading, spacing: 6) {
+                                Label("Pair this iPhone first", systemImage: "link.badge.plus")
+                                    .font(.headline)
+                                Text("AltLoad needs this iPhone's pairing file to talk to it, the way a computer would.")
+                                    .font(.subheadline)
+                                    .foregroundStyle(Aurora.secondaryText)
+                            }
+                        }
+                        GlassActionButton(title: "Go to Pair", systemImage: "antenna.radiowaves.left.and.right", prominent: true) {
+                            RootView.openPair(tab: $selectedTab)
+                        }
+                    } else {
+                        GlassActionButton(title: LocalizedStringKey(primaryTitle), systemImage: primarySymbol, prominent: true) {
+                            controller.begin(.store(store))
                         }
                     }
-                    GlassActionButton(title: "Go to Pair", systemImage: "antenna.radiowaves.left.and.right", prominent: true) {
-                        RootView.openPair(tab: $selectedTab)
-                    }
-                } else {
-                    GlassActionButton(title: LocalizedStringKey(primaryTitle), systemImage: primarySymbol, prominent: true) {
-                        controller.begin(.store(store))
-                    }
-                }
 
-                if store.isSideStore, controller.releases[store] == nil, controller.catalogErrors[store] != nil {
-                    repositoryDownCard
-                }
+                    if store.isSideStore, controller.releases[store] == nil, controller.catalogErrors[store] != nil {
+                        repositoryDownCard
+                    }
 
-                VStack(spacing: 10) {
-                    SectionLabel(title: "Setup", trailing: "\(readyCount) of 4 ready")
-                    checklist
+                    VStack(spacing: 10) {
+                        SectionLabel(title: "Setup", trailing: "\(readyCount) of 4 ready")
+                        checklist
+                    }
                 }
 
                 if !controller.apps.isEmpty {
                     yourApps
                 }
 
-                Text("AltLoad signs \(store.name) with your Apple ID and installs it straight onto this iPhone. With a free Apple ID it lasts 7 days, and AltLoad reminds you the day before.")
+                Text(isAppleTV ? "Signs the tvOS IPA with your Apple ID and installs it on the Apple TV over Wi-Fi. With a free Apple ID it lasts 7 days." : "AltLoad signs \(store.name) with your Apple ID and installs it straight onto this iPhone. With a free Apple ID it lasts 7 days, and AltLoad reminds you the day before.")
                     .font(.system(size: 13))
                     .foregroundStyle(Aurora.secondaryText)
                     .multilineTextAlignment(.center)
@@ -79,7 +85,7 @@ struct InstallView: View {
                         Button("Install IPA from Files…", systemImage: "doc.badge.plus") {
                             showImporter = true
                         }
-                        .disabled(pairings.selfPairing == nil || controller.isBusy)
+                        .disabled(controller.needsSelfPairing || controller.isBusy)
                     } label: {
                         Label("More", systemImage: "ellipsis")
                     }
@@ -101,7 +107,8 @@ struct InstallView: View {
                 switch result {
                 case .success(let url):
                     do {
-                        controller.begin(.ipa(try StoreCatalog.importIPA(from: url)))
+                        let imported = try StoreCatalog.importIPA(from: url)
+                        if isAppleTV { tvIPA = imported } else { controller.begin(.ipa(imported)) }
                     } catch {
                         importError = error.localizedDescription
                     }
@@ -140,6 +147,64 @@ struct InstallView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
+    }
+
+    private var isAppleTV: Bool { controller.device != .thisIPhone }
+
+    private var tvPairing: SavedPairing? {
+        controller.device.pairingID.flatMap { id in pairings.items.first { $0.id == id } }
+    }
+
+    /// Unofficial fork: Apple TV install screen — no store, no iPhone pairing, no VPN.
+    @ViewBuilder
+    private var appleTVContent: some View {
+        GlassCard {
+            VStack(alignment: .leading, spacing: 6) {
+                Label(tvPairing?.displayName ?? "Apple TV", systemImage: "appletv")
+                    .font(.headline)
+                Text(tvIPA.map { "IPA: \($0.lastPathComponent)" } ?? "Pick a tvOS build (.ipa). iOS IPAs won't run on Apple TV.")
+                    .font(.subheadline)
+                    .foregroundStyle(Aurora.secondaryText)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+
+        GlassActionButton(title: LocalizedStringKey(tvIPA == nil ? "Choose tvOS IPA" : "Choose Another IPA"), systemImage: "doc.badge.plus", prominent: tvIPA == nil) {
+            showImporter = true
+        }
+        .disabled(controller.isBusy)
+
+        if let tvIPA {
+            GlassActionButton(title: "Install to Apple TV", systemImage: "appletv.fill", prominent: true) {
+                controller.begin(.ipa(tvIPA))
+            }
+            .disabled(controller.isBusy || tvPairing == nil)
+        }
+
+        VStack(spacing: 10) {
+            SectionLabel(title: "Setup", trailing: "\(tvReadyCount) of 3 ready")
+            GlassCard {
+                VStack(alignment: .leading, spacing: 14) {
+                    StatusRow(
+                        title: "Apple TV paired",
+                        detail: tvPairing.map { "\($0.displayName), paired \($0.date.formatted(.relative(presentation: .named)))" }
+                            ?? "Pair it in Tools › Pair",
+                        state: tvPairing == nil ? .attention : .done)
+                    StatusRow(
+                        title: "Apple ID",
+                        detail: AppleIDStore.email.isEmpty ? "You'll sign in when you install" : AppleIDStore.email,
+                        state: AppleIDStore.email.isEmpty ? .pending : .done)
+                    StatusRow(
+                        title: "tvOS IPA",
+                        detail: tvIPA?.lastPathComponent ?? "Choose one from Files",
+                        state: tvIPA == nil ? .pending : .done)
+                }
+            }
+        }
+    }
+
+    private var tvReadyCount: Int {
+        (tvPairing != nil ? 1 : 0) + (AppleIDStore.email.isEmpty ? 0 : 1) + (tvIPA != nil ? 1 : 0)
     }
 
     private var storeMenu: some View {

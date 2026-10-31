@@ -144,7 +144,7 @@ struct InstallFlowView: View {
     private var step: some View {
         switch controller.phase {
         case .idle:
-            if pairings.selfPairing == nil {
+            if controller.needsSelfPairing {
                 GlassCard(tint: Aurora.danger) {
                     VStack(alignment: .leading, spacing: 6) {
                         Label("Pair this iPhone first", systemImage: "link.badge.plus")
@@ -437,7 +437,7 @@ struct InstallFlowView: View {
     private var actions: some View {
         switch controller.phase {
         case .idle:
-            if pairings.selfPairing == nil {
+            if controller.needsSelfPairing {
                 GlassActionButton(title: "Go to Pair", systemImage: "antenna.radiowaves.left.and.right", prominent: true) {
                     controller.finish()
                     onGoToPair()
