@@ -70,3 +70,6 @@ site/installs/
 !signing/certs/*/
 !signing/certs/**/*.p12
 !signing/certs/**/*.mobileprovision
+
+# Vendored isideload ships Apple's public root/WWDR CA certificates.
+!core/vendor/isideload/src/assets/*.cer
