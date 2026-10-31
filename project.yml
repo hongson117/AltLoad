@@ -1,6 +1,6 @@
 name: AltLoad
 options:
-  bundleIdPrefix: com.mirazbakis
+  bundleIdPrefix: com.hongson117
   deploymentTarget:
     iOS: "18.0"
   createIntermediateGroups: true
@@ -32,7 +32,7 @@ targets:
       - target: AltLoadWidgets
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.mirazbakis.altload
+        PRODUCT_BUNDLE_IDENTIFIER: com.hongson117.tvsideload
         INFOPLIST_FILE: ios/App/Resources/Info.plist
         ASSETCATALOG_COMPILER_APPICON_NAME: AltLoad
         OTHER_LDFLAGS: "-lc++"
@@ -49,7 +49,7 @@ targets:
       - path: ios/Shared
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.mirazbakis.altload.widgets
+        PRODUCT_BUNDLE_IDENTIFIER: com.hongson117.tvsideload.widgets
         INFOPLIST_FILE: ios/Widgets/Info.plist
         GENERATE_INFOPLIST_FILE: NO
         SKIP_INSTALL: YES

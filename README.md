@@ -1,3 +1,13 @@
+> **Unofficial personal fork — not AltLoad, not affiliated with or endorsed by mirazbakis.**
+> Based on AltLoad by mirazbakis – https://github.com/mirazbakis/AltLoad
+>
+> This fork (`hongson117/AltLoad`, branch `appletv-install`) is a personal, non-commercial
+> experiment to install tvOS apps on an Apple TV straight from an iPhone (target picker,
+> LAN RemotePairing tunnel, tvOS provisioning profiles). It is used only to study the code
+> and build for my own devices, under the AltLoad License (see `LICENSE.md`, unchanged).
+> No builds, releases, or AltStore/SideStore sources are published from this fork; the app
+> uses its own name ("TV Sideload") and bundle ID (`com.hongson117.tvsideload`).
+
 <div align="center">
 
 <img src="docs/assets/logo.svg" width="120" height="120" alt="AltLoad">
