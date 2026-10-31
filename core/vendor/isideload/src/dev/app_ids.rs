@@ -157,10 +157,12 @@ pub trait AppIdsApi {
         app_id: &AppId,
         device_type: impl Into<Option<DeveloperDeviceType>> + Send,
     ) -> Result<Profile, Report> {
-        let body = plist!(dict {
+        let device_type = device_type.into();
+        let mut body = plist!(dict {
             "teamId": &team.team_id,
             "appIdId": &app_id.app_id_id,
         });
+        super::device_type::add_platform_params(&mut body, &device_type);
 
         let response: Profile = self
             .developer_session()

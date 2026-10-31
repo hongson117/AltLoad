@@ -50,11 +50,13 @@ pub trait DevicesApi {
         udid: &str,
         device_type: impl Into<Option<DeveloperDeviceType>> + Send,
     ) -> Result<DeveloperDevice, Report> {
-        let body = plist!(dict {
+        let device_type = device_type.into();
+        let mut body = plist!(dict {
             "teamId": &team.team_id,
             "name": name,
             "deviceNumber": udid,
         });
+        super::device_type::add_platform_params(&mut body, &device_type);
 
         let device: DeveloperDevice = self
             .developer_session()

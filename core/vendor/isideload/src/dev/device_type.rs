@@ -11,7 +11,8 @@ impl DeveloperDeviceType {
         match self {
             DeveloperDeviceType::Any => "",
             DeveloperDeviceType::Ios => "ios/",
-            DeveloperDeviceType::Tvos => "tvos/",
+            // Apple has no tvos/ path (HTTP 404); tvOS uses ios/ plus DTDK_Platform (see AltSign).
+            DeveloperDeviceType::Tvos => "ios/",
             DeveloperDeviceType::Watchos => "watchos/",
         }
     }
@@ -26,4 +27,12 @@ pub fn dev_url(endpoint: &str, device_type: impl Into<Option<DeveloperDeviceType
             .url_segment(),
         endpoint,
     )
+}
+
+/// AltSign-style platform params for addDevice / downloadTeamProvisioningProfile.
+pub fn add_platform_params(body: &mut plist::Dictionary, device_type: &Option<DeveloperDeviceType>) {
+    if let Some(DeveloperDeviceType::Tvos) = device_type {
+        body.insert("DTDK_Platform".into(), "tvos".into());
+        body.insert("subPlatform".into(), "tvOS".into());
+    }
 }
